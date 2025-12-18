@@ -135,3 +135,157 @@
 
         <div class="row g-3">
             <div class="col-12" v-for="(recipe, rIndex) in recipeStatusList" :key="rIndex">
+                <div class="card recipe-card shadow-sm h-100 bg-white">
+                    <div class="card-body position-relative">
+                        <button v-if="recipe.isCustom" @click="deleteRecipe(recipe.id)" class="btn btn-sm text-secondary position-absolute top-0 end-0 m-2">&times;</button>
+                        <h5 class="fw-bold mb-2">{{ recipe.icon }} {{ recipe.name }} <span v-if="recipe.isCustom" class="badge bg-warning text-dark ms-1" style="font-size:10px;">自創</span></h5>
+                        <span class="badge rounded-pill mb-2" :class="recipe.canMake ? 'badge-available' : 'badge-missing'">{{ recipe.canMake ? '✅ 可製作' : '⚠️ 缺膠囊' }}</span>
+                        <p class="text-muted small mb-3">{{ recipe.desc }}</p>
+                        <div class="bg-light p-2 rounded mb-3"><small class="fw-bold text-secondary">準備材料：</small> <span class="badge bg-white text-dark border ms-1" v-for="ing in recipe.ingredients">🔹 {{ ing }}</span></div>
+                        
+                        <div v-if="recipe.canMake">
+                            <div class="d-flex align-items-center justify-content-between mt-3 p-2 bg-success bg-opacity-10 rounded">
+                                <div><small class="text-success-emphasis">使用：</small><br><span class="fw-bold text-dark">☕ {{ recipe.matchCapsule.name }}</span></div>
+                                <button @click="makeRecipe(recipe.matchCapsule)" class="btn btn-dark btn-sm rounded-pill px-4">製作 (-1)</button>
+                            </div>
+                        </div>
+                        <div v-else>
+                            <div class="p-2 bg-danger bg-opacity-10 rounded mt-3">
+                                <small class="text-danger fw-bold">推薦使用：</small><small class="text-secondary">{{ recipe.recommended.join("、") }}</small>
+                                <a href="https://shopee.tw/nespresso_tw?entryPoint=ShopBySearch&searchKeyword=nespresso" 
+                                   target="_blank" 
+                                   class="d-block text-end mt-2 text-danger small text-decoration-none fw-bold"
+                                   onclick="gtag('event', 'click_shopee', {'event_category': 'conversion', 'event_label': 'recipe_suggestion'});">
+                                    去賣場找找 >
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div v-if="currentView === 'BACKUP'">
+        <div class="card backup-card shadow-sm bg-white mb-4">
+            <div class="card-body">
+                <h5 class="fw-bold mb-3">📤 備份資料</h5>
+                <textarea class="form-control backup-textarea mb-2" rows="3" readonly :value="backupCode"></textarea>
+                <button @click="copyBackup" class="btn btn-outline-dark w-100">{{ copyBtnText }}</button>
+            </div>
+        </div>
+        <div class="card backup-card shadow-sm bg-white border border-warning">
+            <div class="card-body">
+                <h5 class="fw-bold mb-3">📥 還原資料</h5>
+                <textarea v-model="restoreInput" class="form-control backup-textarea mb-2" rows="3" placeholder="貼上代碼..."></textarea>
+                <button @click="restoreData" class="btn btn-warning w-100 fw-bold" :disabled="!restoreInput">開始還原</button>
+            </div>
+        </div>
+        <div class="text-center mt-4">
+            <a href="https://shopee.tw/nespresso_tw?entryPoint=ShopBySearch&searchKeyword=nespresso" 
+               target="_blank" 
+               class="btn btn-link text-muted small"
+               onclick="gtag('event', 'click_shopee', {'event_category': 'conversion', 'event_label': 'backup_page'});">
+               前往 Nespresso 蝦皮旗艦店逛逛
+            </a>
+        </div>
+    </div>
+</div>
+
+<script>
+    const { createApp, ref, computed, watch, onMounted } = Vue;
+    const CAPSULE_DB = {
+        OL: { "義式經典": ["拿坡里", "卡薩", "芮斯崔朵", "阿佩奇歐", "羅馬", "威尼斯", "熱那亞莉梵朵"], "濃縮系列": ["卡碧其歐", "沃魯托", "科斯", "巴黎濃縮咖啡"], "環遊世界": ["布宜諾斯艾利斯", "開普敦", "上海", "斯德哥爾摩", "東京薇瓦托", "維也納黎尼茲歐"], "單一產區": ["印尼", "印度", "哥倫比亞", "尼加拉瓜", "衣索比亞"], "咖啡師特調": ["奇亞羅", "斯庫諾", "科托", "香草風味", "焦糖風味", "巧克力風味", "冰鎮淺焙", "冰鎮深焙"] },
+        VL: { "義式濃縮": ["伊爾咖啡", "迪亞沃利托", "奧緹奇歐", "芙緹索", "歐拉菲歐", "托坎托"], "雙份濃縮": ["雙份濃縮-斯庫諾", "雙份濃縮-奇亞羅", "雙份濃縮-朵爾雀"], "Gran Lungo": ["馥塔朵", "阿隆迪歐", "伊尼茲歐", "哥斯大黎加", "衣索比亞"], "大杯臻選": ["濃烈", "史托米歐", "奧達奇歐", "梅絡茲歐", "索蕾莉歐", "墨西哥", "哥倫比亞"], "咖啡師特調": ["比昂科-畢科洛", "比昂科-多比歐", "比昂科-馥緹", "巧克力風味", "榛果風味", "甜香草風味", "金黃焦糖風味", "冰鎮-異國陽光", "冰鎮-沁涼"] }
+    };
+    const OFFICIAL_RECIPES = [
+        { id: 'off_1', name: "經典冰拿鐵", icon: "🧊", desc: "牛奶與濃縮咖啡結合。", ingredients: ["冰塊", "150ml 牛奶"], recommended: ["阿佩奇歐", "斯庫諾", "雙份濃縮-斯庫諾", "比昂科-多比歐", "羅馬", "拿坡里"] },
+        { id: 'off_2', name: "西西里檸檬氣泡", icon: "🍋", desc: "清爽氣泡感。", ingredients: ["氣泡水", "檸檬汁", "冰塊", "糖漿"], recommended: ["冰鎮淺焙", "冰鎮深焙", "冰鎮-異國陽光", "科斯", "沃魯托"] },
+        { id: 'off_3', name: "焦糖瑪奇朵", icon: "🍮", desc: "甜蜜焦糖香氣。", ingredients: ["焦糖醬", "熱牛奶", "奶泡"], recommended: ["焦糖風味", "金黃焦糖風味", "比昂科-畢科洛", "沃魯托"] },
+        { id: 'off_4', name: "燕麥奶拿鐵", icon: "🌾", desc: "穀物香氣。", ingredients: ["燕麥奶"], recommended: ["奇亞羅", "斯庫諾", "科托", "比昂科-馥緹", "阿佩奇歐"] },
+        { id: 'off_5', name: "濃縮康寶藍", icon: "☁️", desc: "覆蓋鮮奶油。", ingredients: ["鮮奶油", "可可粉"], recommended: ["卡薩", "拿坡里", "芮斯崔朵", "伊爾咖啡"] }
+    ];
+
+    createApp({
+        setup() {
+            const capsules = ref([]);
+            const customRecipes = ref([]);
+            const newCapsule = ref({ system: 'OL', selectedName: '', customInput: '', quantity: 10 });
+            const showCreateRecipe = ref(false);
+            const newRecipe = ref({ name: '', desc: '', ingredients: '', keywords: '' });
+            const currentView = ref('INVENTORY');
+            const filter = ref('ALL');
+            const copyBtnText = ref('📋 複製代碼');
+            const restoreInput = ref('');
+
+            onMounted(() => {
+                const savedData = localStorage.getItem('nespresso_cn_v1');
+                const savedRecipes = localStorage.getItem('nespresso_custom_recipes');
+                if (savedData) capsules.value = JSON.parse(savedData);
+                else capsules.value = [{ id: 1, system: 'OL', name: '義式經典-阿佩奇歐 (Arpeggio)', quantity: 5 }, { id: 2, system: 'VL', name: '梅絡茲歐 (Melozio)', quantity: 12 }];
+                if (savedRecipes) customRecipes.value = JSON.parse(savedRecipes);
+            });
+
+            watch(capsules, (newVal) => localStorage.setItem('nespresso_cn_v1', JSON.stringify(newVal)), { deep: true });
+            watch(customRecipes, (newVal) => localStorage.setItem('nespresso_custom_recipes', JSON.stringify(newVal)), { deep: true });
+
+            const currentSystemList = computed(() => CAPSULE_DB[newCapsule.value.system]);
+            const addCapsule = () => {
+                let finalName = newCapsule.value.selectedName;
+                if (finalName === 'CUSTOM') {
+                    finalName = newCapsule.value.customInput.trim();
+                    if (!finalName) return alert('請輸入自訂膠囊名稱');
+                } else if (!finalName) return alert('請選擇膠囊');
+                
+                const existing = capsules.value.find(c => c.name === finalName && c.system === newCapsule.value.system);
+                if (existing) existing.quantity += newCapsule.value.quantity;
+                else capsules.value.push({ id: Date.now(), system: newCapsule.value.system, name: finalName, quantity: newCapsule.value.quantity });
+                
+                newCapsule.value.selectedName = ''; newCapsule.value.customInput = '';
+            };
+            
+            const filteredCapsules = computed(() => filter.value === 'ALL' ? capsules.value : capsules.value.filter(c => c.system === filter.value));
+            const drink = (cap) => { if (cap.quantity > 0) cap.quantity--; };
+            const remove = (cap) => { if(confirm('刪除?')) capsules.value = capsules.value.filter(c => c.id !== cap.id); };
+
+            const addRecipe = () => {
+                if (!newRecipe.value.name || !newRecipe.value.keywords) return alert('請填寫食譜名稱與關鍵字');
+                customRecipes.value.push({ id: Date.now(), name: newRecipe.value.name, icon: "✨", desc: newRecipe.value.desc || "我的特調", ingredients: newRecipe.value.ingredients.split(/[,，]/).map(s=>s.trim()).filter(s=>s), recommended: newRecipe.value.keywords.split(/[,，]/).map(s=>s.trim()).filter(s=>s), isCustom: true });
+                newRecipe.value = { name: '', desc: '', ingredients: '', keywords: '' }; showCreateRecipe.value = false; alert('食譜建立成功！');
+            };
+            const deleteRecipe = (id) => { if(confirm('確定刪除?')) customRecipes.value = customRecipes.value.filter(r => r.id !== id); };
+
+            const recipeStatusList = computed(() => {
+                return [...customRecipes.value, ...OFFICIAL_RECIPES].map(recipe => {
+                    const match = capsules.value.find(cap => recipe.recommended.some(k => cap.name.includes(k)) && cap.quantity > 0);
+                    return { ...recipe, canMake: !!match, matchCapsule: match || null };
+                });
+            });
+            const makeRecipe = (cap) => { if(confirm(`確定製作? 扣除: ${cap.name}`)) cap.quantity--; };
+            
+            const getCapsuleColor = (name) => {
+                if(name.includes('星巴克')||name.includes('Starbucks')) return '#007042';
+                if(name.includes('阿佩奇歐')) return '#382554';
+                if(name.includes('梅絡茲歐')) return '#d8b265';
+                const colors = ['#556b2f', '#8b4513', '#483d8b', '#008b8b', '#2f4f4f'];
+                return colors[name.length % colors.length];
+            };
+
+            const backupCode = computed(() => { try { return btoa(unescape(encodeURIComponent(JSON.stringify({capsules: capsules.value, recipes: customRecipes.value})))); } catch(e){ return "Error"; }});
+            const copyBackup = () => { navigator.clipboard.writeText(backupCode.value).then(() => { copyBtnText.value = '✅ 已複製！'; setTimeout(() => copyBtnText.value = '📋 複製代碼', 2000); }); };
+            const restoreData = () => {
+                if(!restoreInput.value) return;
+                if(confirm('警告：這將覆蓋現有資料！')) {
+                    try { const data = JSON.parse(decodeURIComponent(escape(atob(restoreInput.value))));
+                        if(Array.isArray(data)) capsules.value = data; else { if(data.capsules) capsules.value = data.capsules; if(data.recipes) customRecipes.value = data.recipes; }
+                        alert('還原成功！'); restoreInput.value = ''; currentView.value = 'INVENTORY';
+                    } catch(e) { alert('無效代碼'); }
+                }
+            };
+
+            return { capsules, newCapsule, currentView, filter, currentSystemList, addCapsule, filteredCapsules, drink, remove, recipeStatusList, makeRecipe, getCapsuleColor, backupCode, copyBtnText, copyBackup, restoreInput, restoreData, showCreateRecipe, newRecipe, addRecipe, deleteRecipe };
+        }
+    }).mount('#app');
+</script>
+</body>
+</html>
