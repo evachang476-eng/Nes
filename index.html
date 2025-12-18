@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nespresso 膠囊管家 (自創食譜版)</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <style>
+        body { background-color: #f0f2f5; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+        
+        /* 樣式優化 */
+        .capsule-card, .recipe-card, .promo-card, .backup-card { border-radius: 16px; overflow: hidden; border: none; transition: 0.2s; }
+        .capsule-card:hover, .recipe-card:hover { transform: translateY(-3px); box-shadow: 0 10px 20px rgba(0,0,0,0.08); }
+        
+        /* 膠囊圈圈 */
+        .circle { width: 42px; height: 42px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 10px; text-shadow: 0 1px 2px rgba(0,0,0,0.3); border: 2px solid rgba(255,255,255,0.2); }
+        
+        /* 狀態標籤 */
+        .badge-available { background-color: #d1e7dd; color: #0f5132; }
+        .badge-missing { background-color: #f8d7da; color: #842029; }
+        
+        /* 按鈕與導航 */
+        .btn-brew { background-color: #b8860b; color: white; border: none; }
+        .btn-brew:hover { background-color: #986f0b; color: white; }
+        .btn-brew:disabled { background-color: #e0e0e0; color: #999; }
+        
+        /* 蝦皮專用按鈕 */
+        .btn-shopee { background-color: #ee4d2d; color: white; font-weight: bold; }
+        .btn-shopee:hover { background-color: #d73211; color: white; }
+
+        .nav-pills .nav-link.active { background-color: #333; color: #fff; }
+        .nav-pills .nav-link { color: #666; font-weight: bold; }
+        
+        /* 動畫 */
+        .custom-input-enter-active, .custom-input-leave-active { transition: all 0.3s ease; }
+        .custom-input-enter-from, .custom-input-leave-to { opacity: 0; transform: translateY(-10px); }
+
+        .backup-textarea { font-family: monospace; font-size: 12px; background: #f8f9fa; color: #666; }
+    </style>
+</head>
+<body>
+
+<div id="app" class="container py-4" style="max-width: 600px;">
+    
+    <div class="text-center mb-4">
+        <h2 class="fw-bold text-dark">☕ Nespresso 居家咖啡館</h2>
+        <small class="text-muted">庫存管理 & 食譜推薦</small>
+    </div>
+
+    <ul class="nav nav-pills nav-fill mb-4 bg-white p-2 rounded-4 shadow-sm">
+        <li class="nav-item">
+            <a class="nav-link rounded-pill" :class="{active: currentView==='INVENTORY'}" @click="currentView='INVENTORY'" href="#">📊 庫存</a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link rounded-pill" :class="{active: currentView==='RECIPES'}" @click="currentView='RECIPES'" href="#">🍹 食譜</a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link rounded-pill" :class="{active: currentView==='BACKUP'}" @click="currentView='BACKUP'" href="#">☁️ 備份</a>
+        </li>
+    </ul>
+
+    <div v-if="currentView === 'INVENTORY'">
+        
+        <div class="card p-3 mb-4 shadow-sm bg-white">
+            <h6 class="card-title fw-bold text-secondary mb-3">📦 快速進貨</h6>
+            <div class="row g-2">
+                <div class="col-3">
+                    <select v-model="newCapsule.system" class="form-select text-center fw-bold">
+                        <option value="OL">OL</option>
+                        <option value="VL">VL</option>
+                    </select>
+                </div>
+                <div class="col-6">
+                    <select v-model="newCapsule.selectedName" class="form-select">
+                        <option value="CUSTOM">➕ 自行輸入 (新口味)</option>
+                        <option disabled>──────────</option>
+                        <optgroup v-for="(list, category) in currentSystemList" :label="category">
+                            <option v-for="name in list" :value="name">{{ name }}</option>
+                        </optgroup>
+                    </select>
+                </div>
+                <div class="col-3">
+                    <input v-model.number="newCapsule.quantity" type="number" class="form-control text-center" placeholder="數量">
+                </div>
+                
+                <transition name="custom-input">
+                    <div class="col-12" v-if="newCapsule.selectedName === 'CUSTOM'">
+                        <input v-model="newCapsule.customInput" type="text" class="form-control border-primary" placeholder="請輸入膠囊名稱">
+                    </div>
+                </transition>
+
+                <div class="col-12 mt-2">
+                    <button @click="addCapsule" class="btn btn-dark w-100 fw-bold rounded-pill">＋ 加入庫存</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="d-flex gap-2 mb-3 overflow-auto">
+            <button @click="filter='ALL'" class="btn btn-sm rounded-pill px-3" :class="filter==='ALL' ? 'btn-secondary' : 'btn-outline-secondary'">全部</button>
+            <button @click="filter='OL'" class="btn btn-sm rounded-pill px-3" :class="filter==='OL' ? 'btn-secondary' : 'btn-outline-secondary'">Original</button>
+            <button @click="filter='VL'" class="btn btn-sm rounded-pill px-3" :class="filter==='VL' ? 'btn-secondary' : 'btn-outline-secondary'">Vertuo</button>
+        </div>
+
+        <div v-if="filteredCapsules.length === 0" class="text-center text-muted py-5">
+            尚無資料，請先新增膠囊。
+        </div>
+
+        <div v-else>
+            <div v-for="cap in filteredCapsules" :key="cap.id" class="card mb-3 shadow-sm capsule-card bg-white">
+                <div class="card-body d-flex align-items-center justify-content-between py-3">
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="circle shadow-sm" :style="{ backgroundColor: getCapsuleColor(cap.name) }">
+                            {{ cap.system === 'OL' ? 'OL' : 'VL' }}
+                        </div>
+                        <div>
+                            <h6 class="mb-0 fw-bold">{{ cap.name }}</h6>
+                            <small class="text-muted">剩餘 <span class="fw-bold" :class="cap.quantity<5?'text-danger':'text-dark'">{{ cap.quantity }}</span> 顆</small>
+                        </div>
+                    </div>
+                    <div class="d-flex align-items-center gap-1">
+                        <button @click="cap.quantity+=10" class="btn btn-light btn-sm text-secondary rounded-circle" style="width:32px;height:32px;" title="補貨+10">+</button>
+                        <button @click="drink(cap)" :disabled="cap.quantity <= 0" class="btn btn-brew btn-sm px-3 fw-bold rounded-pill">{{ cap.quantity > 0 ? '沖煮' : '缺貨' }}</button>
+                        <button @click="remove(cap)" class="btn btn-link text-danger btn-sm px-2">✕</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card promo-card bg-white border border-danger border-opacity-25 mt-5 mb-4 shadow-sm">
+            <div class="card-body text-center p-4">
+                <h5 class="fw-bold text-dark mb-2">🛍️ 膠囊庫存不足了嗎？</h5>
+                <p class="text-muted small mb-4">前往 Nespresso 蝦皮官方旗艦店補貨，<br>享受原廠品質與快速出貨。</p>
+                <a href="https://shopee.tw/nespresso_tw?entryPoint=ShopBySearch&searchKeyword=nespresso" target="_blank" class="btn btn-shopee w-100 rounded-pill py-2 shadow-sm">
+                    前往官方旗艦店補貨
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div v-if="currentView === 'RECIPES'">
+        
+        <div class="card mb-4 border-0 shadow-sm bg-light">
+            <div class="card-body p-3">
+                <button @click="showCreateRecipe = !showCreateRecipe" class="btn btn-outline-dark w-100 fw-bold border-dashed">
+                    {{ showCreateRecipe ? '收起表單' : '✨ 點此建立我的專屬特調' }}
+                </button>
+
+                <div v-if="showCreateRecipe" class="mt-3">
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold">食譜名稱</label>
+                        <input v-model="newRecipe.name" type="text" class="form-control" placeholder="例如：蜂蜜肉桂拿鐵">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold">描述</label>
+                        <input v-model="newRecipe.desc" type="text" class="form-control" placeholder="例如：暖心又暖胃的冬天飲品">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold">所需材料 (用逗號分隔)</label>
+                        <input v-model="newRecipe.ingredients" type="text" class="form-control" placeholder="例如：蜂蜜, 肉桂粉, 牛奶">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold">適合的膠囊關鍵字 (系統會自動對應)</label>
+                        <input v-model="newRecipe.keywords" type="text" class="form-control" placeholder="例如：阿佩奇歐, 斯庫諾 (用逗號分隔)">
+                        <small class="text-muted" style="font-size:10px;">只要您的庫存名稱包含這些字，就會顯示可製作。</small>
+                    </div>
+                    <button @click="addRecipe" class="btn btn-dark w-100 mt-2">儲存食譜</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-3">
+            <div class="col-12" v-for="(recipe, rIndex) in recipeStatusList" :key="rIndex">
+                <div class="card recipe-card shadow-sm h-100 bg-white">
+                    <div class="card-body position-relative">
+                        <button v-if="recipe.isCustom" @click="deleteRecipe(recipe.id)" class="btn btn-sm text-secondary position-absolute top-0 end-0 m-2" style="font-size:18px;">&times;</button>
+
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <h5 class="fw-bold mb-0">
+                                {{ recipe.icon }} {{ recipe.name }}
+                                <span v-if="recipe.isCustom" class="badge bg-warning text-dark ms-1" style="font-size:10px;">自創</span>
+                            </h5>
+                        </div>
+                        <div class="mb-2">
+                            <span class="badge rounded-pill" :class="recipe.canMake ? 'badge-available' : 'badge-missing'">
+                                {{ recipe.canMake ? '✅ 可製作' : '⚠️ 缺膠囊' }}
+                            </span>
+                        </div>
+                        
+                        <p class="text-muted small mb-3">{{ recipe.desc }}</p>
+                        
+                        <div class="bg-light p-2 rounded mb-3">
+                            <small class="fw-bold text-secondary d-block mb-1">準備材料：</small>
+                            <div class="d-flex gap-2 flex-wrap">
+                                <span class="badge bg-white text-dark border" v-for="ing in recipe.ingredients">🔹 {{ ing }}</span>
+                            </div>
+                        </div>
+
+                        <div v-if="recipe.canMake">
+                            <div class="d-flex align-items-center justify-content-between mt-3 p-2 bg-success bg-opacity-10 rounded">
+                                <div>
+                                    <small class="text-success-emphasis">將使用庫存：</small><br>
+                                    <span class="fw-bold text-dark">☕ {{ recipe.matchCapsule.name }}</span>
+                                </div>
+                                <button @click="makeRecipe(recipe.matchCapsule)" class="btn btn-dark btn-sm rounded-pill px-4">
+                                    製作 (-1)
+                                </button>
+                            </div>
+                        </div>
+
+                        <div v-else>
+                            <div class="p-2 bg-danger bg-opacity-10 rounded mt-3">
+                                <small class="text-danger fw-bold">推薦使用以下膠囊：</small><br>
+                                <small class="text-secondary">{{ recipe.recommended.join("、") }}</small>
+                                <a href="https://shopee.tw/nespresso_tw?entryPoint=ShopBySearch&searchKeyword=nespresso" target="_blank" class="d-block text-end mt-2 text-danger small text-decoration-none fw-bold">
+                                    去賣場找找 >
+                                </a>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div v-if="currentView === 'BACKUP'">
+        <div class="card backup-card shadow-sm bg-white mb-4">
+            <div class="card-body">
+                <h5 class="fw-bold mb-3">📤 備份資料 (移轉到新手機)</h5>
+                <p class="text-muted small">複製代碼，包含您的庫存與<span class="fw-bold text-dark">自創食譜</span>。</p>
+                <textarea class="form-control backup-textarea mb-2" rows="3" readonly :value="backupCode"></textarea>
+                <button @click="copyBackup" class="btn btn-outline-dark w-100">
+                    {{ copyBtnText }}
+                </button>
+            </div>
+        </div>
+
+        <div class="card backup-card shadow-sm bg-white border border-warning">
+            <div class="card-body">
+                <h5 class="fw-bold mb-3">📥 還原資料</h5>
+                <p class="text-muted small">貼上代碼以還原。<span class="text-danger fw-bold">注意：目前的庫存將被覆蓋！</span></p>
+                <textarea v-model="restoreInput" class="form-control backup-textarea mb-2" rows="3" placeholder="請在此貼上備份碼..."></textarea>
+                <button @click="restoreData" class="btn btn-warning w-100 fw-bold" :disabled="!restoreInput">
+                    開始還原
+                </button>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    const { createApp, ref, computed, watch, onMounted } = Vue;
+
+    // --- 中文膠囊資料庫 ---
+    const CAPSULE_DB = {
+        OL: {
+            "義式經典 (Ispirazione)": ["義式經典-拿坡里 (Napoli)", "義式經典-卡薩 (Kazaar)", "義式經典-芮斯崔朵 (Ristretto)", "義式經典-阿佩奇歐 (Arpeggio)", "義式經典-羅馬 (Roma)", "義式經典-威尼斯 (Venezia)", "義式經典-熱那亞莉梵朵 (Livanto)"],
+            "濃縮系列 (Espresso)": ["卡碧其歐 (Capriccio)", "沃魯托 (Volluto)", "科斯 (Cosi)", "巴黎濃縮咖啡 (Paris)"],
+            "環遊世界 (World Explorations)": ["布宜諾斯艾利斯", "開普敦", "上海", "斯德哥爾摩", "東京薇瓦托", "維也納黎尼茲歐"],
+            "單一產區 (Master Origins)": ["印尼", "印度", "哥倫比亞", "尼加拉瓜", "衣索比亞"],
+            "咖啡師特調": ["奇亞羅 (Chiaro)", "斯庫諾 (Scuro)", "科托 (Corto)", "香草風味", "焦糖風味", "巧克力風味", "冰鎮淺焙 (Freddo Delicato)", "冰鎮深焙 (Freddo Intenso)"]
+        },
+        VL: {
+            "義式濃縮 (40ml)": ["伊爾咖啡 (Il Caffè)", "迪亞沃利托 (Diavolitto)", "奧緹奇歐 (Altissio)", "芙緹索 (Voltesso)", "歐拉菲歐 (Orafio)", "托坎托 (Toccanto)"],
+            "雙份濃縮 (80ml)": ["雙份濃縮-斯庫諾 (Scuro)", "雙份濃縮-奇亞羅 (Chiaro)", "雙份濃縮-朵爾雀 (Dolce)"],
+            "Gran Lungo (150ml)": ["馥塔朵 (Fortado)", "阿隆迪歐 (Arondio)", "伊尼茲歐 (Inizio)", "哥斯大黎加", "衣索比亞"],
+            "大杯臻選 (230ml)": ["濃烈 (Intenso)", "史托米歐 (Stormio)", "奧達奇歐 (Odacio)", "梅絡茲歐 (Melozio)", "索蕾莉歐 (Solelio)", "墨西哥", "哥倫比亞"],
+            "咖啡師特調": ["比昂科-畢科洛 (Piccolo)", "比昂科-多比歐 (Doppio)", "比昂科-馥緹 (Forte)", "巧克力風味", "榛果風味", "甜香草風味", "金黃焦糖風味", "冰鎮-異國陽光", "冰鎮-沁涼"]
+        }
+    };
+
+    // --- 官方預設食譜 ---
+    const OFFICIAL_RECIPES = [
+        { id: 'off_1', name: "經典冰拿鐵 (Iced Latte)", icon: "🧊", desc: "牛奶與濃縮咖啡的完美結合，適合炎熱午後。", ingredients: ["冰塊", "150ml 牛奶"], recommended: ["阿佩奇歐", "斯庫諾", "雙份濃縮-斯庫諾", "比昂科-多比歐", "羅馬", "拿坡里"] },
+        { id: 'off_2', name: "西西里檸檬氣泡咖啡", icon: "🍋", desc: "清爽的氣泡感搭配檸檬酸甜。", ingredients: ["氣泡水 100ml", "檸檬汁 15ml", "冰塊", "糖漿"], recommended: ["冰鎮淺焙", "冰鎮深焙", "冰鎮-異國陽光", "科斯", "沃魯托", "衣索比亞"] },
+        { id: 'off_3', name: "焦糖瑪奇朵", icon: "🍮", desc: "甜蜜焦糖香氣，撫慰心靈。", ingredients: ["焦糖醬", "熱牛奶 150ml", "奶泡"], recommended: ["焦糖風味", "金黃焦糖風味", "比昂科-畢科洛", "沃魯托", "芙緹索"] },
+        { id: 'off_4', name: "燕麥奶拿鐵", icon: "🌾", desc: "使用燕麥奶帶出穀物香氣，口感醇厚。", ingredients: ["燕麥奶 150ml"], recommended: ["奇亞羅", "斯庫諾", "科托", "比昂科-馥緹", "阿佩奇歐", "尼加拉瓜"] },
+        { id: 'off_5', name: "濃縮康寶藍 (Con Panna)", icon: "☁️", desc: "濃縮咖啡上覆蓋鮮奶油，濃郁順口。", ingredients: ["鮮奶油", "可可粉"], recommended: ["卡薩", "拿坡里", "芮斯崔朵", "伊爾咖啡", "迪亞沃利托"] }
+    ];
+
+    createApp({
+        setup() {
+            const capsules = ref([]);
+            const customRecipes = ref([]); // 存放自創食譜
+            const newCapsule = ref({ system: 'OL', selectedName: '', customInput: '', quantity: 10 });
+            
+            // 自創食譜表單資料
+            const showCreateRecipe = ref(false);
+            const newRecipe = ref({ name: '', desc: '', ingredients: '', keywords: '' });
+
+            const currentView = ref('INVENTORY');
+            const filter = ref('ALL');
+            const copyBtnText = ref('📋 複製代碼');
+            const restoreInput = ref('');
+
+            onMounted(() => {
+                const savedData = localStorage.getItem('nespresso_cn_v1');
+                const savedRecipes = localStorage.getItem('nespresso_custom_recipes');
+
+                if (savedData) {
+                    capsules.value = JSON.parse(savedData);
+                } else {
+                    capsules.value = [
+                        { id: 1, system: 'OL', name: '義式經典-阿佩奇歐 (Arpeggio)', quantity: 5 },
+                        { id: 2, system: 'VL', name: '梅絡茲歐 (Melozio)', quantity: 12 } 
+                    ];
+                }
+
+                if (savedRecipes) {
+                    customRecipes.value = JSON.parse(savedRecipes);
+                }
+            });
+
+            // 存檔 (分開存，避免結構太複雜)
+            watch(capsules, (newVal) => {
+                localStorage.setItem('nespresso_cn_v1', JSON.stringify(newVal));
+            }, { deep: true });
+
+            watch(customRecipes, (newVal) => {
+                localStorage.setItem('nespresso_custom_recipes', JSON.stringify(newVal));
+            }, { deep: true });
+
+            const currentSystemList = computed(() => CAPSULE_DB[newCapsule.value.system]);
+
+            // --- 膠囊功能 ---
+            const addCapsule = () => {
+                let finalName = newCapsule.value.selectedName;
+                if (finalName === 'CUSTOM') {
+                    finalName = newCapsule.value.customInput.trim();
+                    if (!finalName) return alert('請輸入自訂膠囊名稱');
+                } else if (!finalName) {
+                    return alert('請選擇膠囊');
+                }
+                const existing = capsules.value.find(c => c.name === finalName && c.system === newCapsule.value.system);
+                if (existing) {
+                    existing.quantity += newCapsule.value.quantity;
+                } else {
+                    capsules.value.push({ id: Date.now(), system: newCapsule.value.system, name: finalName, quantity: newCapsule.value.quantity });
+                }
+                newCapsule.value.selectedName = ''; 
+                newCapsule.value.customInput = '';
+            };
+
+            const filteredCapsules = computed(() => {
+                if (filter.value === 'ALL') return capsules.value;
+                return capsules.value.filter(c => c.system === filter.value);
+            });
+
+            const drink = (cap) => { if (cap.quantity > 0) cap.quantity--; };
+            const remove = (cap) => { if(confirm('刪除?')) capsules.value = capsules.value.filter(c => c.id !== cap.id); };
+
+            // --- 食譜功能 (合併官方與自創) ---
+            
+            // 新增自創食譜
+            const addRecipe = () => {
+                if (!newRecipe.value.name || !newRecipe.value.keywords) {
+                    return alert('請填寫食譜名稱與關鍵字');
+                }
+
+                const rec = {
+                    id: Date.now(), // 用時間當 ID
+                    name: newRecipe.value.name,
+                    icon: "✨", // 統一用星星，或可隨機
+                    desc: newRecipe.value.desc || "我的特調",
+                    // 把字串切成陣列
+                    ingredients: newRecipe.value.ingredients.split(/[,，]/).map(s => s.trim()).filter(s => s),
+                    recommended: newRecipe.value.keywords.split(/[,，]/).map(s => s.trim()).filter(s => s),
+                    isCustom: true // 標記為自創
+                };
+
+                customRecipes.value.push(rec);
+                // 重置表單
+                newRecipe.value = { name: '', desc: '', ingredients: '', keywords: '' };
+                showCreateRecipe.value = false;
+                alert('食譜建立成功！');
+            };
+
+            // 刪除自創食譜
+            const deleteRecipe = (id) => {
+                if(confirm('確定要刪除這個自創食譜嗎？')) {
+                    customRecipes.value = customRecipes.value.filter(r => r.id !== id);
+                }
+            };
+
+            // 混合列表顯示
+            const recipeStatusList = computed(() => {
+                // 將官方食譜與自創食譜合併
+                const allRecipes = [...customRecipes.value, ...OFFICIAL_RECIPES];
+
+                return allRecipes.map(recipe => {
+                    const recommendedKeywords = recipe.recommended;
+                    // 檢查庫存
+                    const match = capsules.value.find(cap => 
+                        recommendedKeywords.some(keyword => cap.name.includes(keyword)) && cap.quantity > 0
+                    );
+                    return { ...recipe, canMake: !!match, matchCapsule: match || null };
+                });
+            });
+
+            const makeRecipe = (cap) => {
+                if(confirm(`確定要製作嗎？\n將扣除一顆：${cap.name}`)) {
+                    cap.quantity--;
+                }
+            };
+
+            const getCapsuleColor = (name) => {
+                const n = name;
+                if(n.includes('星巴克') || n.includes('Starbucks')) return '#007042';
+                if(n.includes('阿佩奇歐') || n.includes('Arpeggio')) return '#382554';
+                if(n.includes('羅馬') || n.includes('Roma')) return '#3e3d40';
+                if(n.includes('芮斯崔朵') || n.includes('Ristretto')) return '#000000';
+                if(n.includes('沃魯托') || n.includes('Volluto')) return '#E4B05B';
+                if(n.includes('哥倫比亞')) return '#d95e34';
+                if(n.includes('梅絡茲歐') || n.includes('Melozio')) return '#d8b265';
+                if(n.includes('史托米歐') || n.includes('Stormio')) return '#2e2e2e';
+                if(n.includes('奧達奇歐') || n.includes('Odacio')) return '#1a237e';
+                if(n.includes('拿坡里') || n.includes('Napoli')) return '#8a1d22';
+                if(n.includes('卡薩') || n.includes('Kazaar')) return '#1c304a';
+                if(n.includes('比昂科') || n.includes('Bianco')) return '#f5e6c6';
+                if(n.includes('焦糖') || n.includes('Calamel')) return '#cba26d';
+                if(n.includes('香草') || n.includes('Vanilla')) return '#f8f4e3';
+                if(n.includes('巧克力') || n.includes('Chocolate')) return '#5d4037';
+                if(n.includes('冰鎮') || n.includes('Ice')) return '#87ceeb';
+                const colors = ['#556b2f', '#8b4513', '#483d8b', '#008b8b', '#2f4f4f'];
+                return colors[n.length % colors.length];
+            };
+
+            // --- 備份功能 (修改：包含 customRecipes) ---
+            const backupCode = computed(() => {
+                try {
+                    // 包裝成一個大物件
+                    const payload = {
+                        capsules: capsules.value,
+                        recipes: customRecipes.value
+                    };
+                    const json = JSON.stringify(payload);
+                    return btoa(unescape(encodeURIComponent(json))); 
+                } catch (e) {
+                    return "Error";
+                }
+            });
+
+            const copyBackup = () => {
+                navigator.clipboard.writeText(backupCode.value).then(() => {
+                    copyBtnText.value = '✅ 已複製！';
+                    setTimeout(() => copyBtnText.value = '📋 複製代碼', 2000);
+                });
+            };
+
+            const restoreData = () => {
+                if(!restoreInput.value) return;
+                
+                if(confirm('警告：還原操作將會「覆蓋」您目前所有的庫存與自創食譜！\n\n確定要繼續嗎？')) {
+                    try {
+                        const json = decodeURIComponent(escape(atob(restoreInput.value)));
+                        const data = JSON.parse(json);
+                        
+                        // 相容舊版 (如果備份碼只有陣列，代表是舊的只有膠囊)
+                        if(Array.isArray(data)) {
+                            capsules.value = data;
+                        } else {
+                            // 新版結構
+                            if(data.capsules) capsules.value = data.capsules;
+                            if(data.recipes) customRecipes.value = data.recipes;
+                        }
+
+                        alert('🎉 資料還原成功！');
+                        restoreInput.value = '';
+                        currentView.value = 'INVENTORY';
+                    } catch (e) {
+                        alert('無效的備份碼。');
+                        console.error(e);
+                    }
+                }
+            };
+
+            return {
+                capsules, newCapsule, currentView, filter, currentSystemList,
+                addCapsule, filteredCapsules, drink, remove,
+                recipeStatusList, makeRecipe, getCapsuleColor,
+                backupCode, copyBtnText, copyBackup, restoreInput, restoreData,
+                // 新增
+                showCreateRecipe, newRecipe, addRecipe, deleteRecipe
+            };
+        }
+    }).mount('#app');
+</script>
+
+</body>
+</html>
